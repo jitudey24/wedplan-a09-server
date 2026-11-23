@@ -127,7 +127,7 @@ The platform supports three primary user roles:
 ## 🏗️ Project Structure
 
 ```text
-WedPlan_Server/
+wedplan-a09-server/
 │
 ├── scripts/
 │   ├── create-admin.js
@@ -168,13 +168,13 @@ WedPlan_Server/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yousufali01/WedPlan_Server.git
+git clone https://github.com/jitudey24/wedplan-a09-server.git
 ```
 
 ### 2. Navigate to the Project
 
 ```bash
-cd WedPlan_Server
+cd wedplan-a09-server
 ```
 
 ### 3. Install Dependencies
@@ -246,9 +246,9 @@ CLIENT_URL=http://localhost:3000
 For production, configure the deployed URLs:
 
 ```env
-BETTER_AUTH_URL=https://wedplan-server-seven.vercel.app
-FRONTEND_URL=https://wedplan-client-rho.vercel.app
-CLIENT_URL=https://wedplan-client-rho.vercel.app
+BETTER_AUTH_URL=https://wedplan-a09-server-py1h.vercel.app
+FRONTEND_URL=https://wedplan-a09-client.vercel.app
+CLIENT_URL=https://wedplan-a09-client.vercel.app
 ```
 
 ### 5. Environment Variables Description
@@ -360,7 +360,7 @@ The WedPlan backend is deployed on Vercel.
 
 **Live Backend:**
 
-https://wedplan-server-seven.vercel.app
+https://wedplan-a09-server-py1h.vercel.app
 
 Before deployment:
 
@@ -385,10 +385,10 @@ Before deployment:
 
 ## 🌐 Project Links
 
-- **Live Website:** https://wedplan-client-rho.vercel.app
-- **Live Backend:** https://wedplan-server-seven.vercel.app
-- **Frontend Repository:** https://github.com/yousufali01/WedPlan_Client
-- **Backend Repository:** https://github.com/yousufali01/WedPlan_Server
+- **Live Website:** https://wedplan-a09-client.vercel.app
+- **Live Backend:** https://wedplan-a09-server-py1h.vercel.app
+- **Frontend Repository:** https://github.com/jitudey24/wedplan-a09-client
+- **Backend Repository:** https://github.com/jitudey24/wedplan-a09-server
 
 ## 👨‍💻 Developer
 
