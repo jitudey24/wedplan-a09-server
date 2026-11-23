@@ -56,6 +56,7 @@ const PLANS = {
 };
 
 const validatePlan = (planId) => {
+  console.log("validPlan", planId );
   const plan = PLANS[planId];
 
   if (!plan) {
@@ -66,6 +67,7 @@ const validatePlan = (planId) => {
     planId !== "free" &&
     (!Number.isFinite(plan.amount) || plan.amount <= 0)
   ) {
+    console.log("plan=====",);
     throw new Error("Subscription price is not configured.");
   }
 
@@ -180,17 +182,21 @@ router.get("/mine", requireVendor, async (req, res) => {
 
 const createSubscriptionCheckout = async (req, res) => {
   try {
+    console.log("subcriptionExcute=========1");
     const vendorId = getVendorId(req);
     const { planId } = req.body;
-
+    console.log("==========", req.body);
+    console.log("subcriptionExcute=========2");
     if (!PREMIUM_PLANS.includes(planId)) {
       return res.status(400).json({
         success: false,
         message: "Please select a valid premium plan.",
       });
     }
-
+    console.log("planId", planId);
+    console.log("subcriptionExcute=========3");
     const plan = validatePlan(planId);
+    console.log("plan", plan);
     const db = getDB();
 
     const session = await stripe.checkout.sessions.create({
