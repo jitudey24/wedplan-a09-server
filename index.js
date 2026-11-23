@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { connectDB, getDB, getClient, closeDB } from "./src/config/db.js";
 
 import { ensureIndexes } from "./src/config/indexes.js";
-import { initAuth, getAuth } from "./src/(auth)/auth.js";
+import { initAuth, getAuth, getAllowedOrigins } from "./src/(auth)/auth.js";
 
 // Routes
 import profileRoutes from "./src/(customer)/profile.js";
@@ -25,13 +25,8 @@ const PORT = process.env.PORT || 5000;
 // CORS CONFIGURATION
 // ─────────────────────────────────────────────
 
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  process.env.VERCEL_CLIENT_URL,
-  "https://wedplan-a09-client.vercel.app",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-].filter(Boolean);
+// Same list Better Auth trusts (CLIENT_URL, FRONTEND_URL, BETTER_AUTH_URL, ...)
+const allowedOrigins = getAllowedOrigins();
 
 const corsOptions = {
   origin: (origin, callback) => {
