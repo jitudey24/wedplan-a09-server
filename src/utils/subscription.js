@@ -35,3 +35,4 @@ export const isPremiumActive = (subscription) => {
 
   return expiresAt.getTime() > Date.now();
 };
+

@@ -15,6 +15,37 @@ const ROLES = ["customer", "vendor", "admin"];
 
 let auth = null;
 
+const isProd = process.env.NODE_ENV === "production";
+
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+
+// Remove trailing slash so "https://x.app/" matches "https://x.app"
+const cleanUrl = (url) => (url ? url.trim().replace(/\/+$/, "") : url);
+
+// Exported so Express CORS can use the exact same list.
+const getAllowedOrigins = () => {
+  const origins = [
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    process.env.VERCEL_CLIENT_URL,
+    process.env.BETTER_AUTH_URL, // backend itself (same-origin / rewrite setups)
+
+    // Known deployments
+    "https://wedplan-a09-client.vercel.app",
+    "https://wedplan-client-rho.vercel.app",
+
+    // Local development
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ]
+    .filter(Boolean)
+    .map(cleanUrl);
+
+  return [...new Set(origins)];
+};
+
 // ─────────────────────────────────────────────
 // Environment Validation
 // ─────────────────────────────────────────────
@@ -28,7 +59,12 @@ const validateEnv = () => {
     throw new Error(`Missing environment variables: ${missing.join(", ")}`);
   }
 
-  if (process.env.BETTER_AUTH_SECRET === process.env.GOOGLE_CLIENT_SECRET) {
+  // Only compare when Google secret actually exists
+  // (undefined === undefined used to throw here).
+  if (
+    process.env.GOOGLE_CLIENT_SECRET &&
+    process.env.BETTER_AUTH_SECRET === process.env.GOOGLE_CLIENT_SECRET
+  ) {
     throw new Error(
       "BETTER_AUTH_SECRET and GOOGLE_CLIENT_SECRET must be different.",
     );
@@ -50,13 +86,10 @@ const initAuth = (db, client) => {
 
   validateEnv();
 
-  const trustedOrigins = [
-    process.env.FRONTEND_URL,
-    process.env.VERCEL_CLIENT_URL,
-    "https://wedplan-client-rho.vercel.app",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-  ].filter(Boolean);
+  const trustedOrigins = getAllowedOrigins();
+
+  const hasGoogle =
+    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
 
   auth = betterAuth({
     database: mongodbAdapter(db, {
@@ -64,17 +97,17 @@ const initAuth = (db, client) => {
       transaction: false,
     }),
 
-    baseURL: process.env.BETTER_AUTH_URL,
+    baseURL: cleanUrl(process.env.BETTER_AUTH_URL),
     secret: process.env.BETTER_AUTH_SECRET,
 
     trustedOrigins,
 
     advanced: {
+      // Cross-domain cookies (frontend and backend on different Vercel domains)
+      useSecureCookies: isProd,
       defaultCookieAttributes: {
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-
-        secure: process.env.NODE_ENV === "production",
-
+        sameSite: isProd ? "none" : "lax",
+        secure: isProd,
         httpOnly: true,
       },
     },
@@ -99,59 +132,32 @@ const initAuth = (db, client) => {
         },
 
         // Admin review decision: "pending" | "approved" | "rejected".
-        // Kept separate from vendorApproved because a rejected vendor is also
-        // vendorApproved === false — without it the pending queue could not
-        // tell "never reviewed" from "rejected".
         vendorReviewStatus: {
           type: "string",
           required: false,
           input: false,
         },
 
-        businessName: {
-          type: "string",
-          required: false,
-          input: false,
-        },
-
-        studioName: {
-          type: "string",
-          required: false,
-          input: false,
-        },
-
-        phone: {
-          type: "string",
-          required: false,
-          input: false,
-        },
-
-        location: {
-          type: "string",
-          required: false,
-          input: false,
-        },
-
-        bio: {
-          type: "string",
-          required: false,
-          input: false,
-        },
-
-        website: {
-          type: "string",
-          required: false,
-          input: false,
-        },
+        businessName: { type: "string", required: false, input: false },
+        studioName: { type: "string", required: false, input: false },
+        phone: { type: "string", required: false, input: false },
+        location: { type: "string", required: false, input: false },
+        bio: { type: "string", required: false, input: false },
+        website: { type: "string", required: false, input: false },
       },
     },
 
-    socialProviders: {
-      google: {
-        clientId: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      },
-    },
+    // Enable Google only if credentials exist
+    ...(hasGoogle
+      ? {
+          socialProviders: {
+            google: {
+              clientId: process.env.GOOGLE_CLIENT_ID,
+              clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            },
+          },
+        }
+      : {}),
 
     plugins: [
       admin({
@@ -181,4 +187,4 @@ const getAuth = () => {
 // EXPORTS
 // ─────────────────────────────────────────────
 
-export { initAuth, getAuth, ROLES };
+export { initAuth, getAuth, getAllowedOrigins, ROLES };
