@@ -26,9 +26,9 @@ const PORT = process.env.PORT || 5000;
 // ─────────────────────────────────────────────
 
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
   process.env.VERCEL_CLIENT_URL,
-  "https://wedplan-client-rho.vercel.app",
+  "https://wedplan-a09-client.vercel.app",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ].filter(Boolean);
