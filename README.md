@@ -246,7 +246,7 @@ CLIENT_URL=http://localhost:3000
 For production, configure the deployed URLs:
 
 ```env
-BETTER_AUTH_URL=https://wedplan-a09-server-py1h.vercel.app
+BETTER_AUTH_URL=https://wedplan-a09-server.vercel.app/
 FRONTEND_URL=https://wedplan-a09-client.vercel.app
 CLIENT_URL=https://wedplan-a09-client.vercel.app
 ```
@@ -359,8 +359,7 @@ WedPlan uses ImgBB for image hosting.
 The WedPlan backend is deployed on Vercel.
 
 **Live Backend:**
-
-https://wedplan-a09-server-py1h.vercel.app
+https://wedplan-a09-server.vercel.app/
 
 Before deployment:
 
@@ -386,7 +385,7 @@ Before deployment:
 ## 🌐 Project Links
 
 - **Live Website:** https://wedplan-a09-client.vercel.app
-- **Live Backend:** https://wedplan-a09-server-py1h.vercel.app
+- **Live Backend:** https://wedplan-a09-server.vercel.app/
 - **Frontend Repository:** https://github.com/jitudey24/wedplan-a09-client
 - **Backend Repository:** https://github.com/jitudey24/wedplan-a09-server
 

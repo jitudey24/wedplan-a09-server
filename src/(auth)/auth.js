@@ -1,10 +1,7 @@
+
 /**
  * Better Auth configuration for WedPlan.
- *
- * Uses the existing MongoDB connection.
- * Authentication is handled ONLY by Express Backend.
- *
- * Roles: customer | vendor | admin
+ * Authentication is handled only by Express Backend.
  */
 
 import { betterAuth } from "better-auth";
@@ -17,26 +14,21 @@ let auth = null;
 
 const isProd = process.env.NODE_ENV === "production";
 
-// ─────────────────────────────────────────────
+// ---------------------------------------
 // Helpers
-// ─────────────────────────────────────────────
+// ---------------------------------------
 
-// Remove trailing slash so "https://x.app/" matches "https://x.app"
-const cleanUrl = (url) => (url ? url.trim().replace(/\/+$/, "") : url);
+const cleanUrl = (url) =>
+  url?.trim().replace(/\/+$/, "") || undefined;
 
-// Exported so Express CORS can use the exact same list.
 const getAllowedOrigins = () => {
   const origins = [
     process.env.CLIENT_URL,
     process.env.FRONTEND_URL,
     process.env.VERCEL_CLIENT_URL,
-    process.env.BETTER_AUTH_URL, // backend itself (same-origin / rewrite setups)
 
-    // Known deployments
     "https://wedplan-a09-client.vercel.app",
-    "https://wedplan-client-rho.vercel.app",
 
-    // Local development
     "http://localhost:3000",
     "http://127.0.0.1:3000",
   ]
@@ -46,41 +38,54 @@ const getAllowedOrigins = () => {
   return [...new Set(origins)];
 };
 
-// ─────────────────────────────────────────────
-// Environment Validation
-// ─────────────────────────────────────────────
+// ---------------------------------------
+// Environment validation
+// ---------------------------------------
 
 const validateEnv = () => {
-  const required = ["BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "CLIENT_URL"];
+  const required = [
+    "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_URL",
+    "CLIENT_URL",
+  ];
 
-  const missing = required.filter((key) => !process.env[key]);
+  const missing = required.filter(
+    (key) => !process.env[key]?.trim()
+  );
 
   if (missing.length) {
-    throw new Error(`Missing environment variables: ${missing.join(", ")}`);
+    throw new Error(
+      `Missing environment variables: ${missing.join(", ")}`
+    );
   }
 
-  // Only compare when Google secret actually exists
-  // (undefined === undefined used to throw here).
+  if (process.env.BETTER_AUTH_SECRET.length < 32) {
+    throw new Error(
+      "BETTER_AUTH_SECRET must be at least 32 characters."
+    );
+  }
+
   if (
     process.env.GOOGLE_CLIENT_SECRET &&
-    process.env.BETTER_AUTH_SECRET === process.env.GOOGLE_CLIENT_SECRET
+    process.env.BETTER_AUTH_SECRET ===
+      process.env.GOOGLE_CLIENT_SECRET
   ) {
     throw new Error(
-      "BETTER_AUTH_SECRET and GOOGLE_CLIENT_SECRET must be different.",
+      "Auth secret and Google secret must be different."
     );
   }
 };
 
-// ─────────────────────────────────────────────
-// Initialize Auth
-// ─────────────────────────────────────────────
+// ---------------------------------------
+// Initialize Better Auth
+// ---------------------------------------
 
 const initAuth = (db, client) => {
   if (auth) return auth;
 
   if (!db || !client) {
     throw new Error(
-      "MongoDB database/client missing during Better Auth initialization.",
+      "MongoDB database/client missing during Better Auth initialization."
     );
   }
 
@@ -89,7 +94,8 @@ const initAuth = (db, client) => {
   const trustedOrigins = getAllowedOrigins();
 
   const hasGoogle =
-    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
+    Boolean(process.env.GOOGLE_CLIENT_ID) &&
+    Boolean(process.env.GOOGLE_CLIENT_SECRET);
 
   auth = betterAuth({
     database: mongodbAdapter(db, {
@@ -97,16 +103,19 @@ const initAuth = (db, client) => {
       transaction: false,
     }),
 
+    // Important: public FRONTEND URL.
+    // OAuth callback will pass through Next.js rewrites.
     baseURL: cleanUrl(process.env.BETTER_AUTH_URL),
+
     secret: process.env.BETTER_AUTH_SECRET,
 
     trustedOrigins,
 
     advanced: {
-      // Cross-domain cookies (frontend and backend on different Vercel domains)
       useSecureCookies: isProd,
+
       defaultCookieAttributes: {
-        sameSite: isProd ? "none" : "lax",
+        sameSite: "lax",
         secure: isProd,
         httpOnly: true,
       },
@@ -131,23 +140,50 @@ const initAuth = (db, client) => {
           input: false,
         },
 
-        // Admin review decision: "pending" | "approved" | "rejected".
         vendorReviewStatus: {
           type: "string",
           required: false,
           input: false,
         },
 
-        businessName: { type: "string", required: false, input: false },
-        studioName: { type: "string", required: false, input: false },
-        phone: { type: "string", required: false, input: false },
-        location: { type: "string", required: false, input: false },
-        bio: { type: "string", required: false, input: false },
-        website: { type: "string", required: false, input: false },
+        businessName: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+
+        studioName: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+
+        phone: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+
+        location: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+
+        bio: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+
+        website: {
+          type: "string",
+          required: false,
+          input: false,
+        },
       },
     },
 
-    // Enable Google only if credentials exist
     ...(hasGoogle
       ? {
           socialProviders: {
@@ -164,6 +200,7 @@ const initAuth = (db, client) => {
         defaultRole: "customer",
         adminRoles: ["admin"],
       }),
+
       jwt(),
     ],
   });
@@ -171,20 +208,23 @@ const initAuth = (db, client) => {
   return auth;
 };
 
-// ─────────────────────────────────────────────
+// ---------------------------------------
 // Get Auth
-// ─────────────────────────────────────────────
+// ---------------------------------------
 
 const getAuth = () => {
   if (!auth) {
-    throw new Error("Better Auth is not initialized. Call initAuth() first.");
+    throw new Error(
+      "Better Auth is not initialized. Call initAuth() first."
+    );
   }
 
   return auth;
 };
 
-// ─────────────────────────────────────────────
-// EXPORTS
-// ─────────────────────────────────────────────
-
-export { initAuth, getAuth, getAllowedOrigins, ROLES };
+export {
+  initAuth,
+  getAuth,
+  getAllowedOrigins,
+  ROLES,
+};

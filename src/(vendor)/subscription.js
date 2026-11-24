@@ -13,7 +13,9 @@ import {
 
 const router = Router();
 
-/* ================= STRIPE CONFIGURATION ================= */
+/* =====================================================
+   STRIPE CONFIGURATION
+===================================================== */
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("STRIPE_SECRET_KEY is missing.");
@@ -27,7 +29,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const CLIENT_URL = process.env.CLIENT_URL.replace(/\/+$/, "");
 
-/* ================= PLAN CONFIGURATION ================= */
+/* =====================================================
+   PLAN CONFIGURATION
+===================================================== */
 
 const PLANS = {
   free: {
@@ -56,7 +60,6 @@ const PLANS = {
 };
 
 const validatePlan = (planId) => {
-  console.log("validPlan", planId );
   const plan = PLANS[planId];
 
   if (!plan) {
@@ -67,14 +70,15 @@ const validatePlan = (planId) => {
     planId !== "free" &&
     (!Number.isFinite(plan.amount) || plan.amount <= 0)
   ) {
-    console.log("plan=====",);
     throw new Error("Subscription price is not configured.");
   }
 
   return plan;
 };
 
-/* ================= HELPERS ================= */
+/* =====================================================
+   HELPERS
+===================================================== */
 
 const getVendorId = (req) => {
   const id = req.user?._id || req.user?.id;
@@ -137,7 +141,9 @@ const getCheckoutUrls = () => ({
   cancel_url: `${CLIENT_URL}/vendor/subscription?payment=cancelled`,
 });
 
-/* ================= GET PLANS ================= */
+/* =====================================================
+   GET PLANS
+===================================================== */
 
 router.get("/plans", (req, res) => {
   try {
@@ -155,7 +161,9 @@ router.get("/plans", (req, res) => {
   }
 });
 
-/* ================= GET MY SUBSCRIPTION ================= */
+/* =====================================================
+   GET MY SUBSCRIPTION
+===================================================== */
 
 router.get("/mine", requireVendor, async (req, res) => {
   try {
@@ -178,25 +186,23 @@ router.get("/mine", requireVendor, async (req, res) => {
   }
 });
 
-/* ================= CREATE CHECKOUT SESSION ================= */
+/* =====================================================
+   CREATE CHECKOUT SESSION
+===================================================== */
 
 const createSubscriptionCheckout = async (req, res) => {
   try {
-    console.log("subcriptionExcute=========1");
     const vendorId = getVendorId(req);
-    const { planId } = req.body;
-    console.log("==========", req.body);
-    console.log("subcriptionExcute=========2");
+    const { planId } = req.body || {};
+
     if (!PREMIUM_PLANS.includes(planId)) {
       return res.status(400).json({
         success: false,
         message: "Please select a valid premium plan.",
       });
     }
-    console.log("planId", planId);
-    console.log("subcriptionExcute=========3");
+
     const plan = validatePlan(planId);
-    console.log("plan", plan);
     const db = getDB();
 
     const session = await stripe.checkout.sessions.create({
@@ -206,15 +212,12 @@ const createSubscriptionCheckout = async (req, res) => {
         {
           price_data: {
             currency: plan.currency,
-
             product_data: {
               name: `WedPlan ${plan.name}`,
               description: `${plan.name} subscription`,
             },
-
             unit_amount: Math.round(plan.amount * 100),
           },
-
           quantity: 1,
         },
       ],
@@ -268,31 +271,40 @@ router.post(
 
 router.post("/upgrade", requireVendor, createSubscriptionCheckout);
 
-/* ================= VERIFY CHECKOUT PAYMENT ================= */
+/* =====================================================
+   VERIFY STRIPE PAYMENT
+   NO WEBHOOK REQUIRED
+===================================================== */
 
 router.post("/verify-stripe-session", requireVendor, async (req, res) => {
   try {
     const vendorId = getVendorId(req);
-    const { sessionId } = req.body;
+    const { sessionId } = req.body || {};
 
-    if (!sessionId) {
+    if (
+      typeof sessionId !== "string" ||
+      !sessionId.startsWith("cs_")
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Stripe session ID is required.",
+        message: "A valid Stripe session ID is required.",
       });
     }
 
     const db = getDB();
 
+    // Retrieve session directly from Stripe.
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
+    // Verify ownership.
     if (String(session.metadata?.vendorId) !== String(vendorId)) {
       return res.status(403).json({
         success: false,
-        message: "Invalid checkout session owner.",
+        message: "You do not own this checkout session.",
       });
     }
 
+    // Verify payment.
     if (
       session.mode !== "payment" ||
       session.payment_status !== "paid"
@@ -314,6 +326,7 @@ router.post("/verify-stripe-session", requireVendor, async (req, res) => {
 
     const plan = validatePlan(planId);
 
+    // Verify actual amount and currency.
     if (
       session.currency !== plan.currency ||
       session.amount_total !== Math.round(plan.amount * 100)
@@ -325,31 +338,60 @@ router.post("/verify-stripe-session", requireVendor, async (req, res) => {
     }
 
     const paymentCollection = db.collection("subscriptionPayments");
+    const subscriptionCollection = db.collection("subscriptions");
 
-    const existingPayment = await paymentCollection.findOne({
+    const paymentFilter = {
       stripeSessionId: session.id,
       ...getVendorFilter(vendorId),
-    });
+    };
 
-    if (!existingPayment) {
-      return res.status(400).json({
+    const paymentRecord = await paymentCollection.findOne(paymentFilter);
+
+    if (!paymentRecord) {
+      return res.status(404).json({
         success: false,
         message: "Payment record not found.",
       });
     }
 
-    if (existingPayment.status === "paid") {
-      const existingSubscription = await db
-        .collection("subscriptions")
-        .findOne({
-          stripeSessionId: session.id,
-          ...getVendorFilter(vendorId),
+    // Already verified: return existing subscription.
+    if (paymentRecord.status === "paid") {
+      const existingSubscription = await subscriptionCollection.findOne({
+        stripeSessionId: session.id,
+        ...getVendorFilter(vendorId),
+      });
+
+      if (!existingSubscription) {
+        return res.status(409).json({
+          success: false,
+          message: "Payment is marked paid but subscription is missing. Contact support.",
         });
+      }
 
       return res.status(200).json({
         success: true,
         message: "Payment already verified.",
         subscription: buildSubscriptionResponse(existingSubscription),
+      });
+    }
+
+    // Only pending payments can be activated.
+    if (paymentRecord.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "This payment cannot be processed.",
+      });
+    }
+
+    // Verify stored payment information too.
+    if (
+      paymentRecord.plan !== plan.id ||
+      Number(paymentRecord.amount) !== plan.amount ||
+      String(paymentRecord.currency).toLowerCase() !== plan.currency
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Stored payment information does not match.",
       });
     }
 
@@ -359,18 +401,18 @@ router.post("/verify-stripe-session", requireVendor, async (req, res) => {
       now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000,
     );
 
+    const paymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id || null;
+
     const subscriptionData = {
       vendorId,
       plan: plan.id,
       status: "active",
       paymentStatus: "paid",
       stripeSessionId: session.id,
-
-      stripePaymentIntentId:
-        typeof session.payment_intent === "string"
-          ? session.payment_intent
-          : session.payment_intent?.id || null,
-
+      stripePaymentIntentId: paymentIntentId,
       amount: session.amount_total / 100,
       currency: session.currency,
       startedAt: now,
@@ -380,30 +422,92 @@ router.post("/verify-stripe-session", requireVendor, async (req, res) => {
       updatedAt: now,
     };
 
-    await db.collection("subscriptions").updateOne(
+    /*
+     * Claim the pending payment atomically.
+     * A second concurrent request cannot activate it again.
+     */
+    const claim = await paymentCollection.updateOne(
       {
-        stripeSessionId: session.id,
-        ...getVendorFilter(vendorId),
-      },
-      {
-        $set: subscriptionData,
-      },
-      { upsert: true },
-    );
-
-    await paymentCollection.updateOne(
-      {
-        stripeSessionId: session.id,
-        ...getVendorFilter(vendorId),
+        ...paymentFilter,
+        status: "pending",
       },
       {
         $set: {
-          status: "paid",
-          paymentIntentId: subscriptionData.stripePaymentIntentId,
-          updatedAt: now,
+          status: "processing",
+          processingAt: now,
         },
       },
     );
+
+    if (claim.modifiedCount !== 1) {
+      const latestPayment = await paymentCollection.findOne(paymentFilter);
+
+      if (latestPayment?.status === "paid") {
+        const existing = await subscriptionCollection.findOne({
+          stripeSessionId: session.id,
+          ...getVendorFilter(vendorId),
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Payment already verified.",
+          subscription: buildSubscriptionResponse(existing),
+        });
+      }
+
+      return res.status(409).json({
+        success: false,
+        message: "Payment is currently being processed. Please retry shortly.",
+      });
+    }
+
+    try {
+      await subscriptionCollection.updateOne(
+        { stripeSessionId: session.id },
+        {
+          $set: subscriptionData,
+        },
+        { upsert: true },
+      );
+
+      await paymentCollection.updateOne(
+        {
+          ...paymentFilter,
+          status: "processing",
+        },
+        {
+          $set: {
+            status: "paid",
+            paymentIntentId,
+            paidAt: now,
+            updatedAt: now,
+          },
+          $unset: {
+            processingAt: "",
+          },
+        },
+      );
+    } catch (dbError) {
+      // Keep the payment retryable if activation fails.
+      await paymentCollection.updateOne(
+        {
+          ...paymentFilter,
+          status: "processing",
+        },
+        {
+          $set: {
+            status: "pending",
+            lastError: dbError.message,
+            updatedAt: new Date(),
+          },
+          $unset: {
+            processingAt: "",
+          },
+        },
+      );
+
+      throw dbError;
+    }
 
     return res.status(200).json({
       success: true,
@@ -420,19 +524,24 @@ router.post("/verify-stripe-session", requireVendor, async (req, res) => {
   }
 });
 
-/* ================= PAYMENT METHODS ================= */
+/* =====================================================
+   PAYMENT METHODS
+===================================================== */
 
 router.get("/payment-methods", requireVendor, async (req, res) => {
   try {
     const db = getDB();
     const vendorId = getVendorId(req);
 
-    const vendor = await db.collection("user").findOne({
-      _id: vendorId instanceof ObjectId
+    const vendorIdQuery =
+      vendorId instanceof ObjectId
         ? vendorId
         : ObjectId.isValid(String(vendorId))
           ? new ObjectId(String(vendorId))
-          : vendorId,
+          : vendorId;
+
+    const vendor = await db.collection("user").findOne({
+      _id: vendorIdQuery,
     });
 
     if (!vendor?.stripeCustomerId) {
@@ -467,7 +576,9 @@ router.get("/payment-methods", requireVendor, async (req, res) => {
   }
 });
 
-/* ================= DOWNGRADE ================= */
+/* =====================================================
+   DOWNGRADE
+===================================================== */
 
 router.post("/downgrade", requireVendor, async (req, res) => {
   try {
@@ -507,12 +618,14 @@ router.post("/downgrade", requireVendor, async (req, res) => {
   }
 });
 
-/* ================= DIRECT PAYMENT ================= */
+/* =====================================================
+   DIRECT PAYMENT
+===================================================== */
 
 router.post("/pay", requireVendor, async (req, res) => {
   try {
     const vendorId = getVendorId(req);
-    const { planId, paymentMethodId } = req.body;
+    const { planId, paymentMethodId } = req.body || {};
 
     if (!PREMIUM_PLANS.includes(planId) || !paymentMethodId) {
       return res.status(400).json({
@@ -524,12 +637,15 @@ router.post("/pay", requireVendor, async (req, res) => {
     const plan = validatePlan(planId);
     const db = getDB();
 
-    const vendor = await db.collection("user").findOne({
-      _id: vendorId instanceof ObjectId
+    const vendorIdQuery =
+      vendorId instanceof ObjectId
         ? vendorId
         : ObjectId.isValid(String(vendorId))
           ? new ObjectId(String(vendorId))
-          : vendorId,
+          : vendorId;
+
+    const vendor = await db.collection("user").findOne({
+      _id: vendorIdQuery,
     });
 
     if (!vendor) {
@@ -570,7 +686,6 @@ router.post("/pay", requireVendor, async (req, res) => {
       payment_method: paymentMethodId,
       confirm: true,
       off_session: true,
-
       metadata: {
         vendorId: String(vendorId),
         planId: plan.id,

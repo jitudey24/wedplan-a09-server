@@ -1,46 +1,115 @@
+
 /**
- * Authentication & authorization middleware for WedPlan.
+ * WedPlan Authentication & Authorization Middleware
  *
- * - Supports Better Auth session cookies and Bearer JWT.
- * - Always loads the current user from MongoDB.
- * - Blocked users cannot access protected APIs.
- * - Expired bans are allowed automatically.
- * - Roles and vendor approval are always read from MongoDB.
+ * Features:
+ * 1. Better Auth session cookies (primary)
+ * 2. Better Auth Bearer JWT (fallback)
+ * 3. Latest user data from MongoDB
+ * 4. Role-based authorization
+ * 5. Vendor approval protection
+ * 6. Blocked user protection
  */
 
 import { fromNodeHeaders } from "better-auth/node";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+} from "jose";
+import { ObjectId } from "mongodb";
 
 import { getAuth } from "./auth.js";
 import { getDB } from "../config/db.js";
-import { sanitizeUser, toId } from "../utils/helpers.js";
+import { sanitizeUser } from "../utils/helpers.js";
 
 let jwks = null;
 
+/* =====================================================
+   ID HELPERS
+===================================================== */
+
+const normalizeUserId = (id) => {
+  if (!id) return null;
+
+  if (id instanceof ObjectId) {
+    return id.toHexString();
+  }
+
+  return String(id);
+};
+
+const buildUserIdQuery = (userId) => {
+  const normalizedId = normalizeUserId(userId);
+
+  if (!normalizedId) {
+    throw new Error("Invalid user ID.");
+  }
+
+  const conditions = [
+    { id: normalizedId },
+  ];
+
+  if (ObjectId.isValid(normalizedId)) {
+    conditions.push({
+      _id: new ObjectId(normalizedId),
+    });
+  }
+
+  return { $or: conditions };
+};
+
+/* =====================================================
+   JWT CONFIGURATION
+===================================================== */
+
 const getJWKSet = () => {
   if (!jwks) {
-    const jwksURL = new URL("/api/auth/jwks", process.env.BETTER_AUTH_URL);
+    const baseURL = process.env.BETTER_AUTH_URL;
+
+    if (!baseURL) {
+      throw new Error("BETTER_AUTH_URL is missing.");
+    }
+
+    const jwksURL = new URL(
+      "/api/auth/jwks",
+      baseURL,
+    );
+
     jwks = createRemoteJWKSet(jwksURL);
   }
 
   return jwks;
 };
 
+/* =====================================================
+   VERIFY BEARER TOKEN
+===================================================== */
+
 const verifyBearerToken = async (token) => {
   const baseURL = process.env.BETTER_AUTH_URL;
 
-  const { payload } = await jwtVerify(token, getJWKSet(), {
-    issuer: baseURL,
-    audience: baseURL,
-  });
+  if (!baseURL) {
+    throw new Error("BETTER_AUTH_URL is missing.");
+  }
+
+  const issuer = baseURL.replace(/\/+$/, "");
+
+  const { payload } = await jwtVerify(
+    token,
+    getJWKSet(),
+    {
+      issuer,
+      audience: issuer,
+    },
+  );
 
   return payload;
 };
 
-/**
- * Check whether a Better Auth banned user is currently blocked.
- * An expired temporary ban does not block access.
- */
+/* =====================================================
+   CHECK BLOCKED USER
+===================================================== */
+
 const isUserBlocked = (user) => {
   if (user?.banned !== true) {
     return false;
@@ -50,7 +119,9 @@ const isUserBlocked = (user) => {
     return true;
   }
 
-  const expiresAt = new Date(user.banExpires).getTime();
+  const expiresAt = new Date(
+    user.banExpires,
+  ).getTime();
 
   if (Number.isNaN(expiresAt)) {
     return true;
@@ -59,43 +130,78 @@ const isUserBlocked = (user) => {
   return expiresAt > Date.now();
 };
 
-/**
- * Authenticate and load fresh user data from MongoDB.
- */
+/* =====================================================
+   AUTHENTICATE USER
+===================================================== */
+
 const authenticateUser = async (req, res, next) => {
   try {
     const auth = getAuth();
 
     let userId = null;
+    let authenticationMethod = null;
 
-    const authHeader = req.headers.authorization || "";
+    /* -------------------------------------
+       1. BETTER AUTH SESSION
+    ------------------------------------- */
 
-    // 1. Bearer JWT authentication
-    if (authHeader.startsWith("Bearer ")) {
-      const token = authHeader.slice(7).trim();
-
-      let payload;
-
-      try {
-        payload = await verifyBearerToken(token);
-      } catch {
-        return res.status(401).json({
-          success: false,
-          message: "Invalid or expired token.",
-        });
-      }
-
-      userId = payload.sub;
-    } else {
-      // 2. Better Auth session authentication
+    try {
       const session = await auth.api.getSession({
         headers: fromNodeHeaders(req.headers),
       });
 
       if (session?.user?.id) {
-        userId = session.user.id;
+        userId = normalizeUserId(
+          session.user.id,
+        );
+
+        authenticationMethod = "session";
+      }
+    } catch (error) {
+      console.error(
+        "Better Auth session error:",
+        error.message,
+      );
+    }
+
+    /* -------------------------------------
+       2. BEARER JWT FALLBACK
+    ------------------------------------- */
+
+    if (!userId) {
+      const authHeader =
+        req.headers.authorization || "";
+
+      if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader
+          .slice(7)
+          .trim();
+
+        if (token) {
+          try {
+            const payload =
+              await verifyBearerToken(token);
+
+            if (payload.sub) {
+              userId = normalizeUserId(
+                payload.sub,
+              );
+
+              authenticationMethod = "bearer";
+            }
+          } catch (error) {
+            console.error(
+              "Bearer JWT verification failed:",
+              error.message,
+            );
+          }
+        }
       }
     }
+
+    /* -------------------------------------
+       3. CHECK AUTHENTICATION
+    ------------------------------------- */
 
     if (!userId) {
       return res.status(401).json({
@@ -104,14 +210,23 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    // 3. Always load the latest user from MongoDB
+    /* -------------------------------------
+       4. LOAD LATEST USER FROM DATABASE
+    ------------------------------------- */
+
     const db = getDB();
 
-    const query = {
-      $or: [{ _id: toId(userId) }, { id: String(userId) }],
-    };
+    const dbUser = await db
+      .collection("user")
+      .findOne(buildUserIdQuery(userId));
 
-    const dbUser = await db.collection("user").findOne(query);
+    console.log("AUTH DEBUG:", {
+      authenticationMethod,
+      userId,
+      dbUserFound: Boolean(dbUser),
+      role: dbUser?.role,
+      vendorApproved: dbUser?.vendorApproved,
+    });
 
     if (!dbUser) {
       return res.status(401).json({
@@ -120,7 +235,10 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    // 4. Blocked user protection
+    /* -------------------------------------
+       5. CHECK BLOCKED ACCOUNT
+    ------------------------------------- */
+
     if (isUserBlocked(dbUser)) {
       return res.status(403).json({
         success: false,
@@ -130,10 +248,13 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    // 5. Normalize current DB user
-    const id =
-      dbUser.id ??
-      (dbUser._id?.toHexString ? dbUser._id.toHexString() : String(dbUser._id));
+    /* -------------------------------------
+       6. NORMALIZE USER
+    ------------------------------------- */
+
+    const id = normalizeUserId(
+      dbUser.id || dbUser._id,
+    );
 
     req.user = {
       ...dbUser,
@@ -141,43 +262,71 @@ const authenticateUser = async (req, res, next) => {
     };
 
     next();
+
   } catch (error) {
+    console.error(
+      "Authentication middleware error:",
+      error,
+    );
+
     next(error);
   }
 };
 
-/** Role authorization */
-const requireRole =
-  (...roles) =>
-  (req, res, next) => {
-    const userRole = req.user?.role ?? "customer";
+/* =====================================================
+   ROLE AUTHORIZATION
+===================================================== */
+
+const requireRole = (...roles) => {
+  return (req, res, next) => {
+    const userRole = req.user?.role || "customer";
 
     if (!roles.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        message: `Access denied. This action requires the ${roles.join(" or ")} role.`,
+        message:
+          `Access denied. Required role: ${roles.join(" or ")}.`,
       });
     }
 
     next();
   };
+};
 
-/** Vendor approval protection */
+/* =====================================================
+   VENDOR APPROVAL
+===================================================== */
+
 const requireVendorApproved = (req, res, next) => {
+  console.log("VENDOR APPROVAL DEBUG:", {
+    userId: req.user?.id,
+    role: req.user?.role,
+    vendorApproved: req.user?.vendorApproved,
+  });
+
   if (req.user?.vendorApproved !== true) {
     return res.status(403).json({
       success: false,
       message:
-        "Your vendor account has not been approved by an admin yet. Please wait for approval.",
+        "Your vendor account has not been approved by an admin yet.",
     });
   }
 
   next();
 };
 
-const requireAuth = [authenticateUser];
+/* =====================================================
+   REUSABLE MIDDLEWARE
+===================================================== */
 
-const requireCustomer = [authenticateUser, requireRole("customer")];
+const requireAuth = [
+  authenticateUser,
+];
+
+const requireCustomer = [
+  authenticateUser,
+  requireRole("customer"),
+];
 
 const requireVendor = [
   authenticateUser,
@@ -185,7 +334,14 @@ const requireVendor = [
   requireVendorApproved,
 ];
 
-const requireAdmin = [authenticateUser, requireRole("admin")];
+const requireAdmin = [
+  authenticateUser,
+  requireRole("admin"),
+];
+
+/* =====================================================
+   EXPORTS
+===================================================== */
 
 export {
   isUserBlocked,
