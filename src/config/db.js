@@ -10,12 +10,15 @@ let connectionPromise = null;
 // ─────────────────────────────────────────────
 
 const buildUri = () => {
-  const dbUri = process.env.DB_URI;
+  // Support both the documented DB_URI name and the common MONGODB_URI name.
+  const dbUri = process.env.DB_URI || process.env.MONGODB_URI || process.env.MONGO_URI;
   const dbUser = process.env.DB_USER;
   const dbPassword = process.env.DB_PASSWORD;
 
   if (!dbUri) {
-    throw new Error("Missing required environment variable: DB_URI");
+    throw new Error(
+      "Missing required environment variable: DB_URI (or MONGODB_URI).",
+    );
   }
 
   const hasCredentials = dbUri.includes("@");
@@ -138,8 +141,9 @@ const connectDB = async () => {
           deprecationErrors: true,
         },
 
-        serverSelectionTimeoutMS: 10000,
-        connectTimeoutMS: 10000,
+        // Allow Atlas a little more time during TLS/server selection.
+        serverSelectionTimeoutMS: 30000,
+        connectTimeoutMS: 30000,
         maxPoolSize: 10,
         minPoolSize: 0,
       });
