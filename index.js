@@ -232,9 +232,30 @@ const isMainModule =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMainModule) {
-  app.listen(PORT, () => {
-    console.log(`WedPlan Server running on port ${PORT}`);
-  });
+  const startServer = async () => {
+    try {
+      // Connect to MongoDB and initialize Better Auth before accepting requests.
+      // This makes connection failures visible immediately in the terminal.
+      await initializeApp();
+
+      app.listen(PORT, () => {
+        console.log(`WedPlan Server running on port ${PORT}`);
+      });
+    } catch (error) {
+      console.error(
+        "WedPlan Server startup failed. Check MongoDB and environment configuration:",
+        error,
+      );
+
+      await closeDB().catch((closeError) => {
+        console.error("MongoDB cleanup failed:", closeError);
+      });
+
+      process.exitCode = 1;
+    }
+  };
+
+  void startServer();
 
   const shutdown = async () => {
     console.log("Shutting down WedPlan Server...");
